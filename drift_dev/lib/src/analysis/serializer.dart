@@ -433,7 +433,7 @@ class ElementDeserializer {
 
     if (_currentlyReading.contains(id)) {
       throw StateError(
-          'Circular error when deserializing drift modules. This is a '
+          'Circular error when deserializing drift modules (cycle: $_currentlyReading -> $id). This is a '
           'bug in drift_dev!');
     }
 
@@ -626,10 +626,11 @@ class ElementDeserializer {
           dartTypes: types,
         );
       case 'trigger':
-        DriftTable? on;
+        DriftElementWithResultSet? on;
 
         if (json['on'] != null) {
-          on = await _readElementReference(json['on'] as Map) as DriftTable;
+          on = await _readElementReference(json['on'] as Map)
+              as DriftElementWithResultSet;
         }
 
         return DriftTrigger(
@@ -643,7 +644,7 @@ class ElementDeserializer {
             for (final write in json.list('writes').cast<Map>())
               WrittenDriftTable(
                 await _readElementReference(write['table'] as Map)
-                    as DriftTable,
+                    as DriftElementWithResultSet,
                 UpdateKind.values.byName(write['kind'] as String),
               )
           ],
@@ -698,7 +699,7 @@ class ElementDeserializer {
               AnnotatedDartCode.fromJson(entry as Map)
           ],
           nameOfRowClass: json['name_of_row_class'] as String,
-          nameOfCompanionClass: json['name_of_companion_class'] as String,
+          nameOfCompanionClass: json['name_of_companion_class'] as String?,
           existingRowClass: json['existing_data_class'] != null
               ? await _readExistingRowClass(
                   id.libraryUri, json['existing_data_class'] as Map)
@@ -761,10 +762,10 @@ class ElementDeserializer {
   }
 
   Future<ColumnType> _readColumnType(Map json, Uri definition) async {
-    if (json.containsKey('custom')) {
+    if (json['custom'] case final customType?) {
       return ColumnType.custom(CustomColumnType(
-        AnnotatedDartCode.fromJson(json['expression'] as Map),
-        await _readDartType(definition, json['dart'] as int),
+        AnnotatedDartCode.fromJson(customType['expression'] as Map),
+        await _readDartType(definition, customType['dart'] as int),
       ));
     } else {
       return ColumnType.drift(

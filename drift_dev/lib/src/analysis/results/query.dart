@@ -76,6 +76,8 @@ class DefinedSqlQuery extends DriftElement implements DriftQueryDeclaration {
   /// `CAST(x AS ENUMNAME(MyDartType))` expression.
   final Map<String, DartType> dartTypes;
 
+  SqlQuery? resolved;
+
   DefinedSqlQuery(
     super.id,
     super.declaration, {
@@ -382,7 +384,7 @@ class CapturedVariable {
 }
 
 class WrittenDriftTable {
-  final DriftTable table;
+  final DriftElementWithResultSet table;
   final UpdateKind kind;
 
   WrittenDriftTable(this.table, this.kind);

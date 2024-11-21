@@ -21,6 +21,10 @@ String portName(String databaseName) {
   return 'drift-db/$databaseName';
 }
 
+String isolateControlPortName(String databaseName) {
+  return 'drift-db/$databaseName/control';
+}
+
 QueryExecutor driftDatabase({
   required String name,
   DriftWebOptions? web,
@@ -56,13 +60,28 @@ QueryExecutor driftDatabase({
       while (true) {
         if (IsolateNameServer.lookupPortByName(portName(name))
             case final port?) {
-          final isolate = DriftIsolate.fromConnectPort(port, serialize: false);
+          final isolate = DriftIsolate.fromConnectPort(port);
           try {
             return await isolate.connect(connectTimeout: connectTimeout);
           } on TimeoutException {
             // Isolate has stopped shortly after the register call. It should
             // also remove the port mapping, so we can just try again in another
             // iteration.
+            // However, it's possible for the isolate to become unreachable
+            // without unregistering itself (either due to a fatal error or when
+            // doing a hot restart). Check if the isolate is still reachable,
+            // and remove the mapping if it's not.
+            final controlPort = IsolateNameServer.lookupPortByName(
+                isolateControlPortName(name));
+            if (controlPort == null) {
+              continue;
+            }
+            final supposedIsolate = Isolate(controlPort);
+            if (!await supposedIsolate.pingWithTimeout()) {
+              // Yup, gone!
+              IsolateNameServer.removePortNameMapping(portName(name));
+            }
+            // Otherwise, the isolate is probably paused. Keep trying...
           }
         } else {
           // No port has been registered yet! Spawn an isolate that will try to
@@ -85,8 +104,7 @@ QueryExecutor driftDatabase({
           // due to a race condition (in which case it exits).
           final first = await firstMessage;
           if (first case SendPort port) {
-            return await DriftIsolate.fromConnectPort(port, serialize: false)
-                .connect();
+            return await DriftIsolate.fromConnectPort(port).connect();
           }
         }
       }
@@ -107,20 +125,55 @@ void _isolateEntrypoint(_EntrypointMessage message) {
   final connections = ReceivePort();
   if (IsolateNameServer.registerPortWithName(
       connections.sendPort, portName(message.name))) {
+    final controlPortName = isolateControlPortName(message.name);
     final server = DriftIsolate.inCurrent(
       () => NativeDatabase(File(message.path)),
       port: connections,
       beforeShutdown: () {
         IsolateNameServer.removePortNameMapping(portName(message.name));
+        IsolateNameServer.removePortNameMapping(controlPortName);
       },
       killIsolateWhenDone: true,
       shutdownAfterLastDisconnect: true,
     );
 
     message.sendResponses.send(server.connectPort);
+
+    IsolateNameServer.removePortNameMapping(controlPortName);
+    IsolateNameServer.registerPortWithName(
+        Isolate.current.controlPort, controlPortName);
   } else {
     // Another isolate is responsible for hosting this database, abort.
     connections.close();
     return;
+  }
+}
+
+extension PingWithTimeout on Isolate {
+  Future<bool> pingWithTimeout(
+      [Duration timeout = const Duration(milliseconds: 500)]) {
+    final completer = Completer<bool>();
+    final receive = ReceivePort();
+    late StreamSubscription subscription;
+    subscription = receive.listen((_) {
+      subscription.cancel();
+
+      if (!completer.isCompleted) {
+        completer.complete(true); // Isolate reachable!
+        receive.close();
+      }
+    });
+
+    ping(receive.sendPort, priority: Isolate.immediate);
+
+    Timer(timeout, () {
+      if (!completer.isCompleted) {
+        completer.complete(false); // Isolate timed out!
+        subscription.cancel();
+        receive.close();
+      }
+    });
+
+    return completer.future;
   }
 }

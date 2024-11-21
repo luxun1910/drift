@@ -26,18 +26,29 @@ jobs:
       - uses: ./.github/actions/prepare
         with:
           dart_version: ${{ needs.setup.outputs.dart_version }}
-      - run: melos bootstrap --scope drift_docs,drift
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.24
+          cache: true
+          cache-key: "flutter-:os:-:channel:-:version:-:arch:-:hash:"
+          cache-path: "${{ runner.tool_cache }}/flutter/:channel:-:version:-:arch:"
+      - name: Bootstrap Dart packages
+        run: melos bootstrap --scope drift_docs,drift,app
         working-directory: .
       - name: Run build
         env:
           IS_RELEASE: ${{ github.event_name == 'push' && github.event.ref == 'refs/heads/latest-release' }}
-        run: dart run tool/ci_build.dart
+        run: |
+          chmod +x ./docs.sh
+          ./docs.sh build
       - name: Analyze Dart and Drift sources
         run: |
           dart format -o none --set-exit-if-changed .
           dart analyze --fatal-infos --fatal-warnings
           dart run drift_dev analyze
-      - run: dart test
+      - name: Test Dart and Drift sources
+        run: dart test
       - name: Deploy to netlify (Branch)
         if: ${{ github.event_name == 'push' }}
         uses: nwtgck/actions-netlify@v3
@@ -87,6 +98,7 @@ jobs:
       - run: dart analyze --fatal-infos --fatal-warnings
       # build, test and upload coverage
       - run: dart run build_runner build --delete-conflicting-outputs
+      - run: dart run build_runner doctor
       - run: dart test --preset ci_unit_tests #-x background_isolate --coverage=coverage
         env:
           DID_RUN_BUILD_RUNNER: "1"
@@ -268,10 +280,14 @@ jobs:
           dart test
   test_flutter:
     runs-on: ubuntu-latest
+    needs: [setup]
     strategy:
       matrix:
         # We want to support the two latest stable Flutter versions
-        flutter: ["3.22", "3.24"]
+        # Unfortunately, we currently can't support Flutter 3.22 because it's
+        # incompatible with `dart_style: ^2.3.7` that `drift_dev` has to use:
+        # https://github.com/simolus3/drift/issues/3302
+        flutter: ["3.24"]
 
     steps:
       - uses: actions/checkout@v4
@@ -287,6 +303,22 @@ jobs:
         shell: bash
       - name: Install dependencies in drift/example/app
         run: melos bootstrap --scope app
+
+      - name: Download sqlite3
+        uses: actions/download-artifact@v4
+        with:
+          name: sqlite3
+          path: drift/.dart_tool/sqlite3/
+      - name: Use downloaded sqlite3
+        shell: bash
+        run: |
+          chmod a+x drift/.dart_tool/sqlite3/latest/sqlite3
+          echo $(realpath drift/.dart_tool/sqlite3/latest) >> $GITHUB_PATH
+          echo "LD_LIBRARY_PATH=$(realpath drift/.dart_tool/sqlite3/latest)" >> $GITHUB_ENV
+      - name: Check sqlite3 version
+        run: sqlite3 --version
+        shell: bash
+
       - name: Generate code
         run: dart run build_runner build --delete-conflicting-outputs
         working-directory: examples/app
@@ -315,15 +347,15 @@ jobs:
         working-directory: examples/migrations_example
         run: |
           dart run build_runner build --delete-conflicting-outputs
-          dart run drift_dev schema generate drift_migrations/ test/generated/ --data-classes --companions
-          dart run drift_dev schema generate drift_migrations/ lib/src/generated
+          dart run drift_dev schema generate drift_schemas/default test/generated/ --data-classes --companions
+          dart run drift_dev schema generate drift_schemas/ lib
       - name: Test
         working-directory: examples/migrations_example
         run: dart test
       - name: Test with older sqlite3
         working-directory: examples/migrations_example
         run: |
-          LD_LIBRARY_PATH=$(realpath drift/.dart_tool/sqlite3/minimum) dart test
+          LD_LIBRARY_PATH=$(realpath ../../drift/.dart_tool/sqlite3/minimum) dart test
       - name: Check that extracting schema still works
         working-directory: examples/migrations_example
         run: dart run drift_dev schema dump lib/database.dart drift_migrations/
@@ -342,7 +374,6 @@ jobs:
       - name: Test
         working-directory: extras/integration_tests/web_wasm
         run: dart test
-
 #  upload_coverage:
 #    runs-on: ubuntu-20.04
 #    needs: [moor, sqlparser]

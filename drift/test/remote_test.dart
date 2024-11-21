@@ -210,6 +210,11 @@ void main() {
     await db.executor.runBatched(statements);
     verify(executor.runBatched(statements));
 
+    // Regression test for https://github.com/simolus3/drift/issues/3194
+    await db.transaction(() async {
+      await db.customUpdate('DELETE FROM "users" WHERE 0');
+    });
+
     await db.close();
   });
 
@@ -336,13 +341,13 @@ void main() {
 
     await expectLater(
       testEventQueue,
-      emitsInOrder(['try-a', 'grant-a']),
+      emitsInOrder(['try-a', 'try-b']),
     );
 
     wait.complete();
     await expectLater(
       testEventQueue,
-      emitsInOrder(['close-a', 'try-b', 'grant-b', 'close-b']),
+      emitsInOrder(['grant-a', 'close-a', 'grant-b', 'close-b']),
     );
   });
 
@@ -363,7 +368,7 @@ void main() {
 Stream<Object?> _checkStreamOfSimple(Stream<Object?> source) {
   return source.map((event) {
     _checkSimple(event);
-    return event;
+    return transportRoundtrip(event);
   });
 }
 

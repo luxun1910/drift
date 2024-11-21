@@ -36,9 +36,7 @@ void main() {
 
     final listings = await _listingsData.mapAsyncAndAwait(
       (p0) => db.managers.listing.createReturning((o) => o(
-          product: Value(p0.product),
-          store: Value(p0.store),
-          price: Value(p0.price))),
+          product: p0.product, store: Value(p0.store), price: Value(p0.price))),
     );
 
     final getAllStores = db.managers.store;
@@ -56,7 +54,7 @@ void main() {
 
     Future testManager<T, M>(
         BaseTableManager<dynamic, dynamic, T, dynamic, dynamic, dynamic,
-                dynamic, M, T, dynamic>
+                dynamic, dynamic, M, T, dynamic>
             selectable) async {
       expect(await selectable.get(), hasLength(3));
       expect(await selectable.get(limit: 1), hasLength(1));

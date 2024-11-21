@@ -1,10 +1,36 @@
-## 2.21.0-dev
+## 2.22.0-dev
+
+- Add `sqliteAny()` method to tables to declare `ANY` columns.
+- Add missing parentheses around adjacent expressions of the same precedence.
+- Fix creating tables that are both `STRICT` and `WITHOUT ROWID`.
+- WASM: Report worker failures to make them easier to diagnose.
+- Allow closing stream queries synchronously, making drift easier to use in
+  widget tests.
+
+## 2.21.0
+
+- To infer whether serialization is required for inter-isolate communication,
+  drift now sends a test message instead serializing by default.
+- The manager API now ignores references whose target column is a foreign key itself.
+- The DevTools extension can now clear drift databases.
+- `View.from` is now declared to return a `JoinedSelectStatement`, the type it
+  returns at runtime.
+
+## 2.20.2
+
+- Fix upcoming `unreachable_switch_default` lint.
+
+## 2.20.1
 
 - Migrate legacy `package:drift/web.dart` to the new JS interop SDK libraries.
   For backwards compatibility, the `channel()` extension on the `MessagePort`
   class in `dart:html` has been kept.
   Once `dart:html` is removed from the Dart SDK, that extension will have to
   be removed from drift as well.
+- Fix cast errors in the protocol for remote workers when compiling with
+  `dart2wasm`.
+- Introduce a faster protocol for communicating with workers. This protocol is
+  enabled automatically after upgrading `drift_worker.js`.
 
 ## 2.20.0
 

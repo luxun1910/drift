@@ -27,7 +27,10 @@ class TestAssetServer {
     await buildRunner.close();
   }
 
-  static Future<TestAssetServer> start({bool debug = false}) async {
+  static Future<TestAssetServer> start({
+    bool debug = false,
+    int? fixedPort,
+  }) async {
     final packageConfig =
         await loadPackageConfigUri((await Isolate.packageConfig)!);
     final ownPackage = packageConfig['web_wasm']!.root;
@@ -91,7 +94,7 @@ class TestAssetServer {
         }
       },
       'localhost',
-      0,
+      fixedPort ?? 0,
     );
 
     return server;
@@ -109,9 +112,12 @@ class DriftWebDriver {
         Set<WasmStorageImplementation> storages,
         Set<MissingBrowserFeature> missingFeatures,
         List<ExistingDatabase> existing,
-      })> probeImplementations() async {
-    final rawResult = await driver
-        .executeAsync('detectImplementations("", arguments[0])', []);
+      })> probeImplementations({bool withWrongWorkerUri = false}) async {
+    final method = withWrongWorkerUri
+        ? 'detectImplementationsWrongUri'
+        : 'detectImplementations';
+    final rawResult =
+        await driver.executeAsync('$method("", arguments[0])', []);
     final result = json.decode(rawResult);
 
     return (

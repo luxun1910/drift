@@ -1,3 +1,31 @@
+## 0.40.0-dev
+
+- Add support for the `dbstat` module.
+
+## 0.39.2
+
+- Fix false-positive lint for a parameter count mismatch on `bm25()`.
+- Fix type interference around `fts5` function calls.
+
+## 0.39.1
+
+- Improve recovery in parser when encountering syntax errors.
+
+## 0.39.0
+
+- When using the `parse` methods on `SqlEngine`, tokenizer errors are now
+  included in the result instead of throwing an exception.
+
+## 0.38.1
+
+- Fix upcoming `unreachable_switch_default` lint.
+
+## 0.38.0
+
+- Resolve `json_extract` return types from context if possible.
+- Warn when `INSTEAD OF` triggers are not used on views.
+- Represent writes to views in `TableWrite`.
+
 ## 0.37.1
 
 - Refine nullability analysis for subquery expressions: Queries with aggregate

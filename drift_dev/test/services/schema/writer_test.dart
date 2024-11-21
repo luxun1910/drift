@@ -3,6 +3,7 @@ library;
 
 import 'dart:convert';
 
+import 'package:drift/backends.dart';
 import 'package:drift_dev/src/analysis/options.dart';
 import 'package:drift_dev/src/analysis/results/file_results.dart';
 import 'package:drift_dev/src/analysis/results/results.dart';
@@ -16,8 +17,18 @@ import '../../analysis/test_utils.dart';
 
 void main() {
   test('writer integration test', () async {
-    final state = await TestBackend.inTest({
-      'a|lib/a.drift': '''
+    const options = DriftOptions.defaults(
+      dialect: DialectOptions(
+        null,
+        [SqlDialect.sqlite, SqlDialect.postgres],
+        SqliteAnalysisOptions(
+          modules: [SqlModule.fts5],
+        ),
+      ),
+    );
+    final state = await TestBackend.inTest(
+      {
+        'a|lib/a.drift': '''
 import 'main.dart';
 
 CREATE TABLE "groups" (
@@ -46,15 +57,22 @@ CREATE INDEX groups_name ON "groups"(name, upper(name));
 
 CREATE VIEW my_view WITH MyViewRow AS SELECT id FROM "groups";
 
+CREATE TRIGGER my_view_trigger INSTEAD OF UPDATE ON my_view BEGIN
+  UPDATE "groups" SET id = old.id;
+END;
+
 simple_query: SELECT * FROM my_view; -- not part of the schema
       ''',
-      'a|lib/main.dart': '''
+        'a|lib/main.dart': '''
 import 'package:drift/drift.dart';
 
 class Users extends Table {
   IntColumn get id => integer().autoIncrement()();
   TextColumn get name => text()();
-  TextColumn get settings => text().named('setting').map(const SettingsConverter())();
+  TextColumn get settings => text()
+    .check(settings.length() > 10)
+    .named('setting')
+    .map(const SettingsConverter())();
 
   @override
   List<Set<Column>> get uniqueKeys => [{name, settings}];
@@ -77,18 +95,22 @@ class MyViewRow {
 @DriftDatabase(include: {'a.drift'}, tables: [Users])
 class Database {}
       ''',
-    }, options: const DriftOptions.defaults(modules: [SqlModule.fts5]));
+      },
+      options: options,
+    );
 
     final file = await state.analyze('package:a/main.dart');
     state.expectNoErrors();
 
     final db = file.fileAnalysis!.resolvedDatabases.values.single;
 
-    final schemaJson = SchemaWriter(db.availableElements).createSchemaJson();
+    final schemaJson =
+        await SchemaWriter(db.availableElements, options: options)
+            .createSchemaJson();
 
     expect(schemaJson, json.decode(expected));
 
-    final schemaWithOptions = SchemaWriter(
+    final schemaWithOptions = await SchemaWriter(
       db.availableElements,
       options: const DriftOptions.defaults(storeDateTimeValuesAsText: true),
     ).createSchemaJson();
@@ -126,9 +148,57 @@ class Database {}
         ResolvedDatabaseAccessor(const {}, const [], reader.entities.toList());
     final input = DatabaseGenerationInput(database, resolved, const {}, null);
 
-    // Write the database. Not crashing is good enough for us here, we have
-    // separate tests for verification
     DatabaseWriter(input, writer.child()).write();
+    final generated = writer.writeGenerated();
+    expect(generated, contains('settings.length() > 10'));
+  });
+
+  test('can export Dart-defined views', () async {
+    final backend = await TestBackend.inTest({
+      'a|lib/main.dart': '''
+import 'package:drift/drift.dart';
+
+class MyTable extends Table {
+  IntColumn get id => integer()();
+}
+
+class MyView extends View {
+  MyTable get a;
+  MyTable get b;
+  MyTable get c;
+
+  @override
+  Query as() => select([
+    a.id,
+    b.id,
+    c.id,
+  ]).from(a).join([
+    innerJoin(b, b.id.equalsExp(a.id)),
+    innerJoin(c, c.id.equalsExp(a.id)),
+  ]);
+}
+
+@DriftDatabase(tables: [MyTable], views: [MyView])
+class Database {}
+''',
+    });
+
+    final file = await backend.analyze('package:a/main.dart');
+    backend.expectNoErrors();
+
+    final db = file.fileAnalysis!.resolvedDatabases.values.single;
+
+    final schemaJson =
+        await SchemaWriter(db.availableElements).createSchemaJson();
+    final serializedView = (schemaJson['entities'] as List)[1];
+
+    expect(serializedView['data'], {
+      'name': 'my_view',
+      'sql':
+          'CREATE VIEW IF NOT EXISTS "my_view" ("id", "id1", "id2") AS SELECT "t0"."id" AS "id", "t1"."id" AS "id1", "t2"."id" AS "id2" FROM "my_table" "t0" INNER JOIN "my_table" "t1" ON "t1"."id" = "t0"."id" INNER JOIN "my_table" "t2" ON "t2"."id" = "t0"."id"',
+      'dart_info_name': r'$MyViewView',
+      'columns': anything,
+    });
   });
 }
 
@@ -136,7 +206,7 @@ const expected = r'''
 {
     "_meta": {
         "description": "This file contains a serialized version of schema entities for drift.",
-        "version": "1.1.0"
+        "version": "1.2.0"
     },
     "options": {
         "store_date_time_values_as_text": false
@@ -245,6 +315,10 @@ const expected = r'''
                         "nullable": false,
                         "customConstraints": null,
                         "defaultConstraints": "PRIMARY KEY AUTOINCREMENT",
+                        "dialectAwareDefaultConstraints": {
+                          "sqlite": "PRIMARY KEY AUTOINCREMENT",
+                          "postgres": "PRIMARY KEY AUTOINCREMENT"
+                        },
                         "default_dart": null,
                         "default_client_dart": null,
                         "dsl_features": [
@@ -269,7 +343,18 @@ const expected = r'''
                         "customConstraints": null,
                         "default_dart": null,
                         "default_client_dart": null,
-                        "dsl_features": [],
+                        "dsl_features": [
+                          {
+                            "check": {
+                              "dart_expression": {
+                                "elements": [
+                                  {"lexeme": "settings", "tag": "settings"},
+                                  ".length() > 10"
+                                ]
+                              }
+                            }
+                          }
+                        ],
                         "type_converter": {
                             "dart_expr": "const SettingsConverter()",
                             "dart_type_name": "Settings"
@@ -397,6 +482,17 @@ const expected = r'''
                         "dsl_features": []
                     }
                 ]
+            }
+        },
+        {
+            "id": 7,
+            "references": [6, 0],
+            "type": "trigger",
+            "data": {
+                "on": 6,
+                "references_in_body": [6, 0],
+                "name": "my_view_trigger",
+                "sql": "CREATE TRIGGER my_view_trigger INSTEAD OF UPDATE ON my_view BEGIN\n  UPDATE \"groups\" SET id = old.id;\nEND;"
             }
         }
     ]

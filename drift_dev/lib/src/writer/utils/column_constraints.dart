@@ -69,9 +69,22 @@ Map<SqlDialect, String> defaultConstraints(DriftColumn column) {
 
       defaultConstraints.add(constraint);
     } else if (feature is DefaultConstraintsFromSchemaFile) {
-      // TODO: Dialect-specific constraints in schema file
+      String buildFor(SqlDialect dialect) {
+        final result = StringBuffer();
+        if (feature.forAllDialects case final defaults?) {
+          result.write(defaults);
+        }
+        if (feature.dialectSpecific[dialect] case final specific?) {
+          if (result.isNotEmpty) {
+            result.write(' ');
+          }
+          result.write(specific);
+        }
+        return result.toString();
+      }
+
       return {
-        for (final dialect in SqlDialect.values) dialect: feature.constraints,
+        for (final dialect in SqlDialect.values) dialect: buildFor(dialect),
       };
     }
   }
